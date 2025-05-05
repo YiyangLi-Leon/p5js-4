@@ -1,0 +1,227 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Magnet Letters Full</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ccapture.js/1.1.0/CCapture.all.min.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; font-family: sans-serif; }
+    #controls {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 10px;
+      border-radius: 8px;
+      z-index: 10;
+      max-width: 320px;
+      font-size: 14px;
+    }
+    #textInputBox {
+      width: 100%;
+      height: 80px;
+      margin-bottom: 10px;
+    }
+    #canvasWrapper {
+      position: relative;
+      z-index: 1;
+    }
+    canvas { display: block; position: absolute; top: 0; left: 0; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <textarea id="textInputBox"></textarea><br>
+    <label>Font Size: <input type="number" id="fontSize" value="20"></label><br>
+    <label>Line Spacing: <input type="number" id="lineSpacing" value="30"></label><br>
+    <label>Easing: <input type="range" id="easing" value="0.1" min="0.01" max="0.5" step="0.01"></label><br>
+    <label>Font Color: <input type="color" id="fontColor" value="#000000"></label><br>
+    <label>Background Color: <input type="color" id="bgColor" value="#ffffff"></label><br>
+    <label>Upload Font: <input type="file" id="fontUpload" accept=".ttf,.otf"></label><br>
+    <label>Upload BG Image/Video: <input type="file" id="bgUpload" accept="image/*,video/*"></label><br>
+    <label>Text Box: W<input type="number" id="boxW" value="800" style="width: 60px"> H<input type="number" id="boxH" value="400" style="width: 60px"></label><br>
+    <label>X<input type="number" id="boxX" value="120" style="width: 60px"> Y<input type="number" id="boxY" value="150" style="width: 60px"></label><br>
+    <button onclick="startRecording()">Start Recording</button>
+    <button onclick="stopRecording()">Stop Recording</button>
+    <button onclick="saveCanvasImage()">Export as JPG</button>
+  </div>
+  <div id="canvasWrapper"></div>
+  <script>
+    let canvas, font, capture;
+    let letters = [], textStr = "";
+    let bgMedia = null;
+    let isVideo = false;
+    let recording = false;
+    let centerIndex = -1, activateFrame = [], frameCounter = 0;
+
+    function preload() {
+      font = loadFont("https://cdnjs.cloudflare.com/ajax/libs/topcoat/0.8.0/font/SourceCodePro-Regular.otf");
+    }
+
+    function setup() {
+      canvas = createCanvas(1040, 735);
+      canvas.parent("canvasWrapper");
+      textFont(font);
+      document.getElementById("textInputBox").value = "In the S bus, in the rush hour. A chap of about 26, felt hat with a cord instead of a ribbon...";
+      createLettersFromText();
+
+      document.getElementById("fontUpload").addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(f) {
+          font = loadFont(f.target.result, () => {
+            textFont(font);
+            createLettersFromText();
+          });
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function draw() {
+      if (bgMedia) {
+        if (isVideo && bgMedia.elt.readyState >= 2) image(bgMedia, 0, 0, width, height);
+        else if (!isVideo) image(bgMedia, 0, 0, width, height);
+      } else {
+        background(document.getElementById("bgColor").value);
+      }
+
+      fill(document.getElementById("fontColor").value);
+      textSize(parseInt(document.getElementById("fontSize").value));
+      textFont(font);
+
+      if (centerIndex !== -1) {
+        updateActivation();
+        applyMagnetLayout(centerIndex);
+      }
+
+      for (let l of letters) {
+        if (l.active) {
+          let diff = l.targetX - l.x;
+          l.x += abs(diff) < 0.5 ? diff : diff * parseFloat(document.getElementById("easing").value);
+        }
+        text(l.char, l.x, l.y);
+      }
+
+      if (recording && capture) capture.capture(canvas.elt);
+      frameCounter++;
+    }
+
+    function mousePressed() {
+      for (let i = 0; i < letters.length; i++) {
+        if (dist(mouseX, mouseY, letters[i].x + letters[i].w / 2, letters[i].y + 10) < 10) {
+          centerIndex = i;
+          frameCounter = 0;
+          setupActivation(centerIndex);
+          break;
+        }
+      }
+    }
+
+    function setupActivation(centerIdx) {
+      activateFrame = new Array(letters.length).fill(Infinity);
+      letters.forEach(l => l.active = false);
+      let row = letters[centerIdx].row;
+      let rowLetters = letters.filter(l => l.row === row);
+      let centerInRow = rowLetters.findIndex(l => l === letters[centerIdx]);
+      activateFrame[centerIdx] = 0;
+      for (let layer = 1;; layer++) {
+        let moved = false;
+        if (centerInRow - layer >= 0) {
+          activateFrame[rowLetters[centerInRow - layer].index] = layer * 10;
+          moved = true;
+        }
+        if (centerInRow + layer < rowLetters.length) {
+          activateFrame[rowLetters[centerInRow + layer].index] = layer * 10;
+          moved = true;
+        }
+        if (!moved) break;
+      }
+    }
+
+    function updateActivation() {
+      for (let i = 0; i < letters.length; i++) {
+        if (frameCounter >= activateFrame[i]) letters[i].active = true;
+      }
+    }
+
+    function applyMagnetLayout(centerIdx) {
+      let row = letters[centerIdx].row;
+      let rowLetters = letters.filter(l => l.row === row);
+      let centerInRow = rowLetters.findIndex(l => l === letters[centerIdx]);
+      rowLetters[centerInRow].targetX = rowLetters[centerInRow].baseX;
+      for (let i = centerInRow - 1; i >= 0; i--) {
+        rowLetters[i].targetX = rowLetters[i + 1].targetX - rowLetters[i].w;
+      }
+      for (let i = centerInRow + 1; i < rowLetters.length; i++) {
+        rowLetters[i].targetX = rowLetters[i - 1].targetX + rowLetters[i - 1].w;
+      }
+    }
+
+    function createLettersFromText() {
+      letters = [];
+      textStr = document.getElementById("textInputBox").value.replace(/\s+/g, '');
+      let fontSize = parseInt(document.getElementById("fontSize").value);
+      let lineSpacing = parseInt(document.getElementById("lineSpacing").value);
+      let boxX = parseInt(document.getElementById("boxX").value);
+      let boxY = parseInt(document.getElementById("boxY").value);
+      let boxW = parseInt(document.getElementById("boxW").value);
+      let boxH = parseInt(document.getElementById("boxH").value);
+      let charsPerRow = floor(boxW / (fontSize * 0.6));
+      textFont(font);
+      textSize(fontSize);
+      for (let i = 0; i < textStr.length; i++) {
+        let col = i % charsPerRow;
+        let row = floor(i / charsPerRow);
+        let x = boxX + col * fontSize * 0.6;
+        let y = boxY + row * lineSpacing;
+        let bounds = font.textBounds(textStr[i], 0, 0, fontSize);
+        letters.push({
+          char: textStr[i], x: x, y: y, baseX: x, baseY: y,
+          targetX: x, w: bounds.w, row: row, index: i, active: false
+        });
+      }
+    }
+
+    ["textInputBox", "fontSize", "lineSpacing", "boxX", "boxY", "boxW", "boxH"].forEach(id =>
+      document.getElementById(id).addEventListener("input", createLettersFromText));
+
+    document.getElementById("bgUpload").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      if (file.type.startsWith("video")) {
+        bgMedia = createVideo(url, () => bgMedia.loop());
+        bgMedia.hide();
+        isVideo = true;
+      } else {
+        loadImage(url, (img) => {
+          bgMedia = img;
+          isVideo = false;
+        });
+      }
+    });
+
+    function startRecording() {
+      capture = new CCapture({ format: 'webm', framerate: 30 });
+      capture.start();
+      recording = true;
+    }
+
+    function stopRecording() {
+      if (capture) {
+        capture.stop();
+        capture.save();
+        recording = false;
+      }
+    }
+
+    function saveCanvasImage() {
+      saveCanvas('magnet_letters_frame', 'jpg');
+    }
+  </script>
+</body>
+</html>
